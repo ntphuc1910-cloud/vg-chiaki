@@ -26,6 +26,7 @@
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
+#include <windows.h>
 #endif
 
 #define RESULT_NONE 0
@@ -276,6 +277,7 @@ static ChiakiSession session;
 static ChiakiMutex out_mutex;
 static uint8_t out_codec = 0;
 static volatile bool quitting = false;
+static volatile bool connected = false;
 
 static bool video_cb(uint8_t *buf, size_t buf_size, int32_t frames_lost, bool frame_recovered, void *user)
 {
@@ -312,6 +314,7 @@ static void event_cb(ChiakiEvent *event, void *user)
 	switch(event->type)
 	{
 		case CHIAKI_EVENT_CONNECTED:
+			connected = true;
 			event_json("connected", NULL, NULL);
 			break;
 		case CHIAKI_EVENT_LOGIN_PIN_REQUEST:
@@ -353,7 +356,8 @@ static void *stdin_thread(void *arg)
 	{
 		if(strncmp(line, "quit", 4) == 0)
 			break;
-		if(strncmp(line, "idr", 3) == 0)
+		// Chỉ xin khung chính khi đã kết nối: gọi sớm hơn sẽ chạm phần stream chưa khởi tạo và sập
+		if(strncmp(line, "idr", 3) == 0 && connected && !quitting)
 			chiaki_session_request_idr(&session);
 	}
 	// stdin đóng hoặc nhận "quit"
@@ -446,8 +450,25 @@ static int cmd_stream(ChiakiLog *log, int argc, char **argv)
 	return 0;
 }
 
+#ifdef _WIN32
+// Khi sập: in vị trí lỗi ra stderr để chẩn đoán (đối chiếu với file .map nếu cần)
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep)
+{
+	unsigned long long info1 = ep->ExceptionRecord->NumberParameters > 1 ? (unsigned long long)ep->ExceptionRecord->ExceptionInformation[1] : 0;
+	fprintf(stderr, "{\"event\":\"crash\",\"code\":\"0x%08lx\",\"addr\":\"0x%llx\",\"base\":\"0x%llx\",\"access\":\"0x%llx\"}\n",
+		(unsigned long)ep->ExceptionRecord->ExceptionCode,
+		(unsigned long long)(uintptr_t)ep->ExceptionRecord->ExceptionAddress,
+		(unsigned long long)(uintptr_t)GetModuleHandle(NULL), info1);
+	fflush(stderr);
+	return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 int main(int argc, char **argv)
 {
+#ifdef _WIN32
+	SetUnhandledExceptionFilter(crash_filter);
+#endif
 	if(argc < 2)
 	{
 		fprintf(stderr, "Dùng: vg-chiaki regist|wakeup|stream ...\n");
