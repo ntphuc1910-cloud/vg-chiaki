@@ -1,0 +1,104 @@
+name: Build vg-chiaki (Windows x64)
+
+# Build chương trình vg-chiaki.exe cho VietGame (dùng libchiaki của chiaki-ng, GPLv3).
+# Chạy: tab Actions -> "Build vg-chiaki (Windows x64)" -> Run workflow. Xong tải file vg-chiaki-win64.zip ở mục Artifacts.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+env:
+  # Phiên bản chiaki-ng cố định để build lặp lại được
+  CHIAKI_NG_COMMIT: 43728af2e639fecb8a7af1cd68c29820a40de973
+
+jobs:
+  build:
+    name: Build vg-chiaki.exe
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Tắt autocrlf
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw64
+          update: true
+          install: git diffutils make unzip zip
+          pacboy: >-
+            ca-certificates:p
+            cc:p
+            cmake:p
+            curl:p
+            json-c:p
+            libevent:p
+            miniupnpc:p
+            ninja:p
+            openssl:p
+            opus:p
+            pkgconf:p
+            protobuf:p
+            python:p
+            python-pip:p
+
+      - name: Cài python protobuf (cho nanopb)
+        run: pip install protobuf
+
+      - name: Lấy mã nguồn chiaki-ng
+        run: |
+          git init chiaki-ng
+          cd chiaki-ng
+          git remote add origin https://github.com/streetpea/chiaki-ng.git
+          git fetch --depth 1 origin "$CHIAKI_NG_COMMIT"
+          git checkout FETCH_HEAD
+          git submodule update --init --depth 1 third-party/nanopb third-party/jerasure third-party/gf-complete third-party/curl
+
+      - name: Thêm vg-chiaki vào cây build
+        run: |
+          mkdir chiaki-ng/vg-chiaki
+          cp native/vg-chiaki/main.c native/vg-chiaki/CMakeLists.txt chiaki-ng/vg-chiaki/
+          echo 'add_subdirectory(vg-chiaki)' >> chiaki-ng/CMakeLists.txt
+
+      - name: Cấu hình
+        run: |
+          cd chiaki-ng
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCHIAKI_ENABLE_GUI=OFF -DCHIAKI_ENABLE_CLI=OFF -DCHIAKI_ENABLE_TESTS=OFF \
+            -DCHIAKI_ENABLE_FFMPEG_DECODER=OFF -DCHIAKI_ENABLE_PI_DECODER=OFF \
+            -DCHIAKI_ENABLE_SETSU=OFF -DCHIAKI_ENABLE_STEAMDECK_NATIVE=OFF \
+            -DCHIAKI_ENABLE_STEAM_SHORTCUT=OFF -DCHIAKI_ENABLE_SPEEX=OFF
+
+      - name: Build
+        run: |
+          cd chiaki-ng
+          cmake --build build --target vg-chiaki
+
+      - name: Gom file chạy được và các DLL cần thiết
+        run: |
+          mkdir -p out/vg-chiaki
+          cp chiaki-ng/build/vg-chiaki/vg-chiaki.exe out/vg-chiaki/
+          ldd out/vg-chiaki/vg-chiaki.exe | grep -i '/mingw64/' | awk '{print $3}' | sort -u | xargs -I{} cp -v "{}" out/vg-chiaki/
+          cp chiaki-ng/COPYING out/vg-chiaki/COPYING-chiaki-ng.txt
+          echo "vg-chiaki dùng libchiaki của chiaki-ng (GPLv3). Mã nguồn: https://github.com/streetpea/chiaki-ng/tree/$CHIAKI_NG_COMMIT" > out/vg-chiaki/NGUON.txt
+          ls -la out/vg-chiaki
+          cd out && zip -r ../vg-chiaki-win64.zip vg-chiaki
+
+      - name: Thử chạy (in cách dùng)
+        run: ./out/vg-chiaki/vg-chiaki.exe || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vg-chiaki-win64
+          path: vg-chiaki-win64.zip
+          if-no-files-found: error
