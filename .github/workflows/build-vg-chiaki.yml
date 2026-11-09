@@ -101,11 +101,13 @@ jobs:
         shell: bash
         run: |
           mkdir pub && cp vg-chiaki-win64.zip pub/
+          nm -n --defined-only out/vg-chiaki/vg-chiaki.exe > pub/vg-chiaki.sym || true
+          objdump -p out/vg-chiaki/vg-chiaki.exe | grep -i ImageBase > pub/imagebase.txt || true
           cd pub
           git init -q -b build-output
           git config user.name "github-actions"
           git config user.email "actions@users.noreply.github.com"
-          git add vg-chiaki-win64.zip
+          git add vg-chiaki-win64.zip vg-chiaki.sym imagebase.txt
           git commit -q -m "Bản build vg-chiaki ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" build-output
 

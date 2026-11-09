@@ -22,6 +22,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -37,9 +38,41 @@
 // ---------------------------------------------------------------------------
 // Tiện ích
 // ---------------------------------------------------------------------------
+// Nhật ký ra file vg-chiaki.log (ghi cấp thấp, không phụ thuộc stdio) để chẩn đoán lỗi sập
+#ifdef _WIN32
+static HANDLE g_logfile = INVALID_HANDLE_VALUE;
+static void flog_open(void)
+{
+	g_logfile = CreateFileA("vg-chiaki.log", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+}
+static void flog(const char *fmt, ...)
+{
+	if(g_logfile == INVALID_HANDLE_VALUE)
+		return;
+	char b[1200];
+	int n = snprintf(b, 40, "%10lu ", (unsigned long)GetTickCount());
+	va_list ap;
+	va_start(ap, fmt);
+	int m = vsnprintf(b + n, sizeof(b) - (size_t)n - 2, fmt, ap);
+	va_end(ap);
+	if(m < 0)
+		return;
+	n += m;
+	if(n > (int)sizeof(b) - 2)
+		n = (int)sizeof(b) - 2;
+	b[n++] = '\n';
+	DWORD w = 0;
+	WriteFile(g_logfile, b, (DWORD)n, &w, NULL);
+}
+#else
+static void flog_open(void) {}
+static void flog(const char *fmt, ...) { (void)fmt; }
+#endif
+
 static void log_cb(ChiakiLogLevel level, const char *msg, void *user)
 {
 	(void)user;
+	flog("[chiaki %d] %s", (int)level, msg);
 	const char *tag = level == CHIAKI_LOG_ERROR ? "E" : level == CHIAKI_LOG_WARNING ? "W" : "I";
 	fprintf(stderr, "[%s] %s\n", tag, msg);
 	fflush(stderr);
@@ -283,6 +316,10 @@ static bool video_cb(uint8_t *buf, size_t buf_size, int32_t frames_lost, bool fr
 {
 	(void)frame_recovered;
 	(void)user;
+	static unsigned long vcount = 0;
+	vcount++;
+	if(vcount <= 10 || vcount % 300 == 0)
+		flog("video_cb #%lu size=%lu lost=%d", vcount, (unsigned long)buf_size, (int)frames_lost);
 	if(quitting || !buf || buf_size == 0)
 		return true;
 	uint8_t hdr[6];
@@ -314,6 +351,7 @@ static void event_cb(ChiakiEvent *event, void *user)
 	switch(event->type)
 	{
 		case CHIAKI_EVENT_CONNECTED:
+			flog("EVENT connected");
 			connected = true;
 			event_json("connected", NULL, NULL);
 			break;
@@ -418,8 +456,10 @@ static int cmd_stream(ChiakiLog *log, int argc, char **argv)
 	chiaki_mutex_init(&out_mutex, false);
 	chiaki_bool_pred_cond_init(&session_ended);
 
+	flog("stream: host=%s res=%d fps=%d codec=%s", host, res, fps, h265 ? "h265" : "h264");
 	memset(&session, 0, sizeof(session));
 	ChiakiErrorCode err = chiaki_session_init(&session, &ci, log);
+	flog("session_init -> %d", (int)err);
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
 		event_json("error", "message", chiaki_error_string(err));
@@ -433,6 +473,7 @@ static int cmd_stream(ChiakiLog *log, int argc, char **argv)
 	chiaki_session_ctrl_set_display_sink(&session, &display_sink);
 
 	err = chiaki_session_start(&session);
+	flog("session_start -> %d", (int)err);
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
 		event_json("error", "message", chiaki_error_string(err));
@@ -445,20 +486,28 @@ static int cmd_stream(ChiakiLog *log, int argc, char **argv)
 	bool in_started = chiaki_thread_create(&in_thread, stdin_thread, NULL) == CHIAKI_ERR_SUCCESS;
 
 	chiaki_session_join(&session);
+	flog("session_join returned");
 	chiaki_session_fini(&session);
+	flog("session_fini done");
 	(void)in_started; // luồng đọc stdin sẽ tự thoát khi tiến trình kết thúc
 	return 0;
 }
 
 #ifdef _WIN32
-// Khi sập: in vị trí lỗi ra stderr để chẩn đoán (đối chiếu với file .map nếu cần)
+// Khi sập: ghi vị trí lỗi và vết gọi hàm vào vg-chiaki.log (offset so với base, đối chiếu bảng ký hiệu của bản build)
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep)
 {
+	unsigned long long info0 = ep->ExceptionRecord->NumberParameters > 0 ? (unsigned long long)ep->ExceptionRecord->ExceptionInformation[0] : 0;
 	unsigned long long info1 = ep->ExceptionRecord->NumberParameters > 1 ? (unsigned long long)ep->ExceptionRecord->ExceptionInformation[1] : 0;
-	fprintf(stderr, "{\"event\":\"crash\",\"code\":\"0x%08lx\",\"addr\":\"0x%llx\",\"base\":\"0x%llx\",\"access\":\"0x%llx\"}\n",
-		(unsigned long)ep->ExceptionRecord->ExceptionCode,
-		(unsigned long long)(uintptr_t)ep->ExceptionRecord->ExceptionAddress,
-		(unsigned long long)(uintptr_t)GetModuleHandle(NULL), info1);
+	unsigned long long base = (unsigned long long)(uintptr_t)GetModuleHandle(NULL);
+	unsigned long long addr = (unsigned long long)(uintptr_t)ep->ExceptionRecord->ExceptionAddress;
+	flog("CRASH code=0x%08lx addr=0x%llx base=0x%llx offset=0x%llx rw=%llu target=0x%llx thread=%lu",
+		(unsigned long)ep->ExceptionRecord->ExceptionCode, addr, base, addr - base, info0, info1, (unsigned long)GetCurrentThreadId());
+	void *frames[32];
+	USHORT n = CaptureStackBackTrace(0, 32, frames, NULL);
+	for(USHORT i = 0; i < n; i++)
+		flog("  frame %u: 0x%llx (offset 0x%llx)", (unsigned)i, (unsigned long long)(uintptr_t)frames[i], (unsigned long long)(uintptr_t)frames[i] - base);
+	fprintf(stderr, "{\"event\":\"crash\",\"code\":\"0x%08lx\",\"offset\":\"0x%llx\"}\n", (unsigned long)ep->ExceptionRecord->ExceptionCode, addr - base);
 	fflush(stderr);
 	return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -469,6 +518,8 @@ int main(int argc, char **argv)
 #ifdef _WIN32
 	SetUnhandledExceptionFilter(crash_filter);
 #endif
+	if(argc >= 2 && strcmp(argv[1], "stream") == 0)
+		flog_open();
 	if(argc < 2)
 	{
 		fprintf(stderr, "Dùng: vg-chiaki regist|wakeup|stream ...\n");
