@@ -9,7 +9,7 @@ on:
     branches: [main, master]
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   # Phiên bản chiaki-ng cố định để build lặp lại được
@@ -96,6 +96,18 @@ jobs:
 
       - name: Thử chạy (in cách dùng)
         run: ./out/vg-chiaki/vg-chiaki.exe || true
+
+      - name: Đẩy file zip lên nhánh build-output
+        shell: bash
+        run: |
+          mkdir pub && cp vg-chiaki-win64.zip pub/
+          cd pub
+          git init -q -b build-output
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add vg-chiaki-win64.zip
+          git commit -q -m "Bản build vg-chiaki ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" build-output
 
       - uses: actions/upload-artifact@v4
         with:
