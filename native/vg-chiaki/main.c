@@ -338,6 +338,13 @@ static void event_cb(ChiakiEvent *event, void *user)
 	}
 }
 
+// libchiaki gọi hàm này KHÔNG kiểm tra rỗng: bắt buộc phải đặt, nếu không sẽ sập (0xC0000005)
+static void cantdisplay_cb(void *user, bool cant_display)
+{
+	(void)user;
+	event_json(cant_display ? "cant_display" : "can_display", NULL, NULL);
+}
+
 static void *stdin_thread(void *arg)
 {
 	(void)arg;
@@ -416,6 +423,10 @@ static int cmd_stream(ChiakiLog *log, int argc, char **argv)
 	}
 	chiaki_session_set_event_cb(&session, event_cb, NULL);
 	chiaki_session_set_video_sample_cb(&session, video_cb, NULL);
+	ChiakiCtrlDisplaySink display_sink;
+	memset(&display_sink, 0, sizeof(display_sink));
+	display_sink.cantdisplay_cb = cantdisplay_cb;
+	chiaki_session_ctrl_set_display_sink(&session, &display_sink);
 
 	err = chiaki_session_start(&session);
 	if(err != CHIAKI_ERR_SUCCESS)
