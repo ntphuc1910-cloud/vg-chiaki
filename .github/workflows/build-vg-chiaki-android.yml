@@ -1,0 +1,132 @@
+name: Build vg-chiaki (Android)
+
+# Build vg-chiaki cho Android (arm64-v8a, armeabi-v7a, x86_64) bằng NDK, dùng libchiaki của chiaki-ng.
+# Đầu ra: libvgchiaki.so (thực chất là chương trình chạy được, đặt tên lib*.so để Android cài vào thư mục
+# thư viện gốc của app - nơi duy nhất được phép chạy file thực thi). Giấy phép: GNU AGPL-3.0 (xem LICENSE).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['native/**', '.github/workflows/build-vg-chiaki-android.yml']
+
+permissions:
+  contents: write
+
+env:
+  CHIAKI_NG_COMMIT: 43728af2e639fecb8a7af1cd68c29820a40de973
+  ANDROID_API: 24
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Công cụ build
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build protobuf-compiler
+          pip install protobuf
+          echo "NDK: $ANDROID_NDK_LATEST_HOME"
+
+      - name: Lấy mã nguồn chiaki-ng
+        run: |
+          git init chiaki-ng
+          cd chiaki-ng
+          git remote add origin https://github.com/streetpea/chiaki-ng.git
+          git fetch --depth 1 origin "$CHIAKI_NG_COMMIT"
+          git checkout FETCH_HEAD
+          git submodule update --init --depth 1 third-party/nanopb third-party/jerasure third-party/gf-complete third-party/curl
+
+      - name: Thêm vg-chiaki vào cây build
+        run: |
+          mkdir chiaki-ng/vg-chiaki
+          cp native/vg-chiaki/main.c native/vg-chiaki/CMakeLists.txt chiaki-ng/vg-chiaki/
+          # Chỉ cần libchiaki: bỏ app Android gốc của chiaki-ng (cần Gradle/oboe)
+          sed -i 's#^\s*add_subdirectory(android/app)#\t# (VietGame) bỏ app Android gốc#' chiaki-ng/CMakeLists.txt
+          echo 'add_subdirectory(vg-chiaki)' >> chiaki-ng/CMakeLists.txt
+
+      - name: Cấu hình (${{ matrix.abi }})
+        run: |
+          cmake -S chiaki-ng -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} -DANDROID_PLATFORM=android-$ANDROID_API -DANDROID_STL=c++_static \
+            -DCHIAKI_ENABLE_ANDROID=ON -DCHIAKI_ENABLE_TESTS=OFF -DCHIAKI_ENABLE_CLI=OFF -DCHIAKI_ENABLE_GUI=OFF \
+            -DCHIAKI_ENABLE_SETSU=OFF -DCHIAKI_ENABLE_FFMPEG_DECODER=OFF -DCHIAKI_ENABLE_PI_DECODER=OFF \
+            -DCHIAKI_LIB_ENABLE_OPUS=OFF -DCHIAKI_ENABLE_SPEEX=OFF \
+            -DCHIAKI_LIB_OPENSSL_EXTERNAL_PROJECT=ON -DCHIAKI_LIB_JSONC_EXTERNAL_PROJECT=ON \
+            -DCHIAKI_LIB_MINIUPNPC_EXTERNAL_PROJECT=ON \
+            -DCHIAKI_ENABLE_STEAM_SHORTCUT=OFF -DCHIAKI_ENABLE_STEAMDECK_NATIVE=OFF \
+            -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
+            "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
+
+      - name: Build
+        run: cmake --build build --target vg-chiaki
+
+      - name: Gom kết quả
+        run: |
+          mkdir -p out/${{ matrix.abi }}
+          cp build/vg-chiaki/vg-chiaki out/${{ matrix.abi }}/libvgchiaki.so
+          "$ANDROID_NDK_LATEST_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip out/${{ matrix.abi }}/libvgchiaki.so
+          file out/${{ matrix.abi }}/libvgchiaki.so
+          ls -la out/${{ matrix.abi }}
+          "$ANDROID_NDK_LATEST_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d out/${{ matrix.abi }}/libvgchiaki.so | grep NEEDED
+
+      - name: Giấy phép thư viện (1 lần)
+        if: matrix.abi == 'arm64-v8a'
+        run: |
+          mkdir -p out/licenses
+          for d in nanopb jerasure gf-complete curl; do
+            for l in LICENSE LICENSE.txt COPYING; do
+              if [ -f "chiaki-ng/third-party/$d/$l" ]; then mkdir -p "out/licenses/$d" && cp "chiaki-ng/third-party/$d/$l" "out/licenses/$d/"; fi
+            done
+          done
+          for d in $(find build -maxdepth 4 -type d \( -iname "openssl*src*" -o -iname "json-c*src*" -o -iname "miniupnpc*src*" -o -iname "json-c-src" -o -iname "miniupnpc-src" \)); do
+            n=$(basename "$d"); mkdir -p "out/licenses/$n"
+            for l in LICENSE LICENSE.txt COPYING; do [ -f "$d/$l" ] && cp "$d/$l" "out/licenses/$n/" || true; done
+            [ -f "$d/miniupnpc/LICENSE" ] && cp "$d/miniupnpc/LICENSE" "out/licenses/$n/" || true
+          done
+          ls -R out/licenses
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vg-chiaki-android-${{ matrix.abi }}
+          path: out
+          retention-days: 3
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+          merge-multiple: true
+      - name: Đóng gói
+        run: |
+          mkdir -p pkg/vg-chiaki-android
+          cp -r art/* pkg/vg-chiaki-android/
+          cp LICENSE pkg/vg-chiaki-android/LICENSE-vg-chiaki.txt
+          {
+            echo "vg-chiaki (Android) - GNU AGPL-3.0 (kèm ngoại lệ OpenSSL của chiaki-ng)."
+            echo "Mã nguồn vg-chiaki: https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}"
+            echo "Dùng libchiaki của chiaki-ng: https://github.com/streetpea/chiaki-ng/tree/$CHIAKI_NG_COMMIT"
+            echo "OpenSSL, json-c, miniupnpc, curl, nanopb, Jerasure, GF-Complete được liên kết tĩnh; giấy phép trong licenses/."
+          } > pkg/vg-chiaki-android/NGUON.txt
+          find pkg -type f | sort
+          cd pkg && zip -qr ../vg-chiaki-android.zip vg-chiaki-android
+      - name: Đẩy lên nhánh build-output-android
+        run: |
+          mkdir pub && cp vg-chiaki-android.zip pub/
+          cd pub
+          git init -q -b build-output-android
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A && git commit -qm "vg-chiaki Android build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" build-output-android
