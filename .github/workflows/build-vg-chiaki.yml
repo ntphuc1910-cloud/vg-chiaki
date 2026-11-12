@@ -106,7 +106,11 @@ jobs:
             b=$(basename "$f")
             pkg=$(pacman -Qqo "/mingw64/bin/$b" 2>/dev/null) || continue
             echo "$b <- $(pacman -Q "$pkg")" >> out/vg-chiaki/PACKAGES.txt
-            if [ -d "/mingw64/share/licenses/$pkg" ]; then cp -r "/mingw64/share/licenses/$pkg" out/vg-chiaki/licenses/; fi
+            short=${pkg#mingw-w64-x86_64-}
+            mkdir -p "out/vg-chiaki/licenses/$short"
+            # Tệp giấy phép do gói cài (thường ở /mingw64/share/licenses/<tên>/)
+            pacman -Qlq "$pkg" | grep -E '/share/(licenses|doc)/[^/]+/.*(COPYING|LICENSE|LICENCE|COPYRIGHT)[^/]*$' | while read -r lf; do cp "$lf" "out/vg-chiaki/licenses/$short/" 2>/dev/null || true; done
+            rmdir "out/vg-chiaki/licenses/$short" 2>/dev/null || true
           done
           # Thư viện liên kết tĩnh trong libchiaki
           for d in nanopb jerasure gf-complete curl; do
