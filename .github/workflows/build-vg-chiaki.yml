@@ -109,7 +109,7 @@ jobs:
             short=${pkg#mingw-w64-x86_64-}
             mkdir -p "out/vg-chiaki/licenses/$short"
             # Tệp giấy phép do gói cài (thường ở /mingw64/share/licenses/<tên>/)
-            pacman -Qlq "$pkg" | grep -E '/share/(licenses|doc)/[^/]+/.*(COPYING|LICENSE|LICENCE|COPYRIGHT)[^/]*$' | while read -r lf; do cp "$lf" "out/vg-chiaki/licenses/$short/" 2>/dev/null || true; done
+            pacman -Qlq "$pkg" | grep -E '/share/(licenses|doc)/[^/]+/.*(COPYING|LICENSE|LICENCE|COPYRIGHT)[^/]*$' | while read -r lf; do cp "$lf" "out/vg-chiaki/licenses/$short/" 2>/dev/null || true; done || true
             rmdir "out/vg-chiaki/licenses/$short" 2>/dev/null || true
           done
           # Thư viện liên kết tĩnh trong libchiaki
