@@ -1,4 +1,4 @@
-// vg-chiaki: chương trình dòng lệnh nhỏ cho VietGame, dùng libchiaki (Chiaki-ng, GPLv3) để
+// vg-chiaki: chương trình dòng lệnh nhỏ cho VietGame, dùng libchiaki (chiaki-ng, AGPL-3.0) để
 //  - regist : ghép đôi (đăng ký) với PS5 bằng PIN, in kết quả JSON ra stdout
 //  - wakeup : đánh thức PS5 đang ở chế độ nghỉ
 //  - stream : kết nối Remote Play và đẩy video đã mã hóa (H.264/H.265) ra stdout
@@ -8,7 +8,13 @@
 //  stderr (văn bản): mỗi dòng bắt đầu bằng '{' là sự kiện JSON, dòng khác là log của libchiaki
 //  stdin: đóng hoặc nhận dòng "quit" thì dừng stream
 //
-// Giấy phép: GPLv3 (liên kết libchiaki).
+// Copyright (C) 2026 Phuc Nguyen
+//
+// This program is free software: you can redistribute it and/or modify it under the terms of the
+// GNU Affero General Public License as published by the Free Software Foundation, version 3
+// (with the OpenSSL additional permission inherited from chiaki-ng). See LICENSE.
+// This program is distributed WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU AGPL for more details.
 
 #include <chiaki/common.h>
 #include <chiaki/log.h>

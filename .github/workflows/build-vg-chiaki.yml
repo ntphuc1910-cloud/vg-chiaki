@@ -1,6 +1,6 @@
 name: Build vg-chiaki (Windows x64)
 
-# Build chương trình vg-chiaki.exe cho VietGame (dùng libchiaki của chiaki-ng, GPLv3).
+# Build chương trình vg-chiaki.exe cho VietGame (dùng libchiaki của chiaki-ng). Giấy phép: GNU AGPL-3.0 (xem LICENSE).
 # Chạy: tab Actions -> "Build vg-chiaki (Windows x64)" -> Run workflow. Xong tải file vg-chiaki-win64.zip ở mục Artifacts.
 
 on:
@@ -90,7 +90,35 @@ jobs:
           cp chiaki-ng/build/vg-chiaki/vg-chiaki.exe out/vg-chiaki/
           ldd out/vg-chiaki/vg-chiaki.exe | grep -i '/mingw64/' | awk '{print $3}' | sort -u | xargs -I{} cp -v "{}" out/vg-chiaki/
           cp chiaki-ng/COPYING out/vg-chiaki/COPYING-chiaki-ng.txt
-          echo "vg-chiaki dùng libchiaki của chiaki-ng (GPLv3). Mã nguồn: https://github.com/streetpea/chiaki-ng/tree/$CHIAKI_NG_COMMIT" > out/vg-chiaki/NGUON.txt
+          cp LICENSE out/vg-chiaki/LICENSE-vg-chiaki.txt
+          {
+            echo "vg-chiaki - GNU AGPL-3.0 (kèm ngoại lệ OpenSSL của chiaki-ng)."
+            echo "Mã nguồn vg-chiaki: https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}"
+            echo "Dùng libchiaki của chiaki-ng: https://github.com/streetpea/chiaki-ng/tree/$CHIAKI_NG_COMMIT"
+            echo "Thư viện DLL đi kèm: xem PACKAGES.txt và thư mục licenses/ (mã nguồn tại https://github.com/msys2/MINGW-packages)."
+          } > out/vg-chiaki/NGUON.txt
+
+      - name: Gom giấy phép các thư viện đi kèm
+        run: |
+          mkdir -p out/vg-chiaki/licenses
+          echo "DLL <- gói MSYS2 (phiên bản)" > out/vg-chiaki/PACKAGES.txt
+          for f in out/vg-chiaki/*.dll; do
+            b=$(basename "$f")
+            pkg=$(pacman -Qqo "/mingw64/bin/$b" 2>/dev/null) || continue
+            echo "$b <- $(pacman -Q "$pkg")" >> out/vg-chiaki/PACKAGES.txt
+            if [ -d "/mingw64/share/licenses/$pkg" ]; then cp -r "/mingw64/share/licenses/$pkg" out/vg-chiaki/licenses/; fi
+          done
+          # Thư viện liên kết tĩnh trong libchiaki
+          for d in nanopb jerasure gf-complete curl; do
+            for l in LICENSE LICENSE.txt COPYING; do
+              if [ -f "chiaki-ng/third-party/$d/$l" ]; then mkdir -p "out/vg-chiaki/licenses/$d" && cp "chiaki-ng/third-party/$d/$l" "out/vg-chiaki/licenses/$d/"; fi
+            done
+          done
+          cat out/vg-chiaki/PACKAGES.txt
+          ls -R out/vg-chiaki/licenses | head -80
+
+      - name: Nén
+        run: |
           ls -la out/vg-chiaki
           cd out && zip -r ../vg-chiaki-win64.zip vg-chiaki
 
