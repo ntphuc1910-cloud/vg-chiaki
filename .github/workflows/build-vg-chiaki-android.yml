@@ -48,7 +48,7 @@ jobs:
           mkdir chiaki-ng/vg-chiaki
           cp native/vg-chiaki/main.c native/vg-chiaki/CMakeLists.txt chiaki-ng/vg-chiaki/
           # Chỉ cần libchiaki: bỏ app Android gốc của chiaki-ng (cần Gradle/oboe)
-          sed -i 's#^\s*add_subdirectory(android/app)#\t# (VietGame) bỏ app Android gốc#' chiaki-ng/CMakeLists.txt
+          sed -i 's|^[[:space:]]*add_subdirectory(android/app)|\t# (VietGame) bo app Android goc|' chiaki-ng/CMakeLists.txt
           echo 'add_subdirectory(vg-chiaki)' >> chiaki-ng/CMakeLists.txt
 
       - name: Cấu hình (${{ matrix.abi }})
