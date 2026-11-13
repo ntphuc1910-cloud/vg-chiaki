@@ -256,27 +256,30 @@ static int cmd_regist(ChiakiLog *log, int argc, char **argv)
 	int result = regist_result;
 	chiaki_bool_pred_cond_unlock(&regist_done);
 
-	if(err != CHIAKI_ERR_SUCCESS || result == RESULT_NONE)
-		chiaki_regist_stop(&regist);
-	chiaki_regist_fini(&regist);
-
+	// In kết quả và đẩy ra NGAY (trước khi dọn dẹp): nếu bước dọn dẹp bị kẹt thì kết quả vẫn tới được VietGame
 	if(result != RESULT_OK)
 	{
 		printf("{\"ok\":false,\"error\":\"%s\"}\n",
 			result == RESULT_NONE ? "Hết thời gian chờ ghép đôi (kiểm tra PIN, địa chỉ IP và PS5 đang bật)"
 			: "Ghép đôi thất bại (PIN sai/hết hạn, hoặc PSN account id không đúng)");
-		return 1;
+		fflush(stdout);
+	}
+	else
+	{
+		printf("{\"ok\":true,\"target\":%d,\"nickname\":", (int)regist_host.target);
+		json_escape_print(stdout, regist_host.server_nickname);
+		printf(",\"regist_key\":\"");
+		hex_print((const uint8_t *)regist_host.rp_regist_key, sizeof(regist_host.rp_regist_key));
+		printf("\",\"rp_key\":\"");
+		hex_print(regist_host.rp_key, sizeof(regist_host.rp_key));
+		printf("\"}\n");
+		fflush(stdout);
 	}
 
-	printf("{\"ok\":true,\"target\":%d,\"nickname\":", (int)regist_host.target);
-	json_escape_print(stdout, regist_host.server_nickname);
-	printf(",\"regist_key\":\"");
-	hex_print((const uint8_t *)regist_host.rp_regist_key, sizeof(regist_host.rp_regist_key));
-	printf("\",\"rp_key\":\"");
-	hex_print(regist_host.rp_key, sizeof(regist_host.rp_key));
-	printf("\"}\n");
-	fflush(stdout);
-	return 0;
+	if(err != CHIAKI_ERR_SUCCESS || result == RESULT_NONE)
+		chiaki_regist_stop(&regist);
+	chiaki_regist_fini(&regist);
+	return result == RESULT_OK ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -536,8 +539,14 @@ int main(int argc, char **argv)
 		fprintf(stderr, "chiaki_lib_init thất bại\n");
 		return 1;
 	}
+	// Không giữ đầu ra trong bộ đệm: kết quả JSON phải tới VietGame ngay cả khi chương trình bị dừng sau đó
+	setvbuf(stdout, NULL, _IONBF, 0);
+	setvbuf(stderr, NULL, _IONBF, 0);
 	ChiakiLog log;
-	chiaki_log_init(&log, CHIAKI_LOG_ERROR | CHIAKI_LOG_WARNING | CHIAKI_LOG_INFO, log_cb, NULL);
+	// Ghép đôi: ghi nhật ký chi tiết (kể cả DEBUG) để biết kẹt ở bước nào
+	uint32_t lvl = CHIAKI_LOG_ERROR | CHIAKI_LOG_WARNING | CHIAKI_LOG_INFO;
+	if(strcmp(argv[1], "regist") == 0) lvl = CHIAKI_LOG_ALL;
+	chiaki_log_init(&log, lvl, log_cb, NULL);
 
 	int r;
 	if(strcmp(argv[1], "regist") == 0) r = cmd_regist(&log, argc, argv);
