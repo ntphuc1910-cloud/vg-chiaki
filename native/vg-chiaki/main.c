@@ -75,6 +75,37 @@ static void flog_open(void) {}
 static void flog(const char *fmt, ...) { (void)fmt; }
 #endif
 
+#ifdef __ANDROID__
+#include <dlfcn.h>
+#include <signal.h>
+#include <unistd.h>
+// Chương trình bị lỗi (crash) trên Android: báo ngay cho VietGame thay vì để tiến trình treo trong lúc hệ thống ghi crash
+static void crash_sig(int sig)
+{
+	char b[96];
+	int n = snprintf(b, sizeof(b), "[E] vg-chiaki bi loi (tin hieu %d)\n", sig);
+	if(n > 0) { ssize_t w = write(2, b, (size_t)n); (void)w; }
+	static const char j[] = "{\"ok\":false,\"error\":\"vg-chiaki bị lỗi khi xử lý phản hồi của PS5\"}\n";
+	ssize_t w2 = write(1, j, sizeof(j) - 1); (void)w2;
+	_exit(3);
+}
+static void android_setup(void)
+{
+	signal(SIGSEGV, crash_sig);
+	signal(SIGABRT, crash_sig);
+	signal(SIGBUS, crash_sig);
+	signal(SIGILL, crash_sig);
+	signal(SIGFPE, crash_sig);
+	// fdsan (Android 10+) có thể dừng chương trình khi thư viện đóng socket: tắt đi (0 = DISABLED)
+	void *h = dlopen("libc.so", RTLD_NOW);
+	if(h)
+	{
+		int (*set_level)(int) = (int (*)(int))dlsym(h, "android_fdsan_set_error_level");
+		if(set_level) set_level(0);
+	}
+}
+#endif
+
 static void log_cb(ChiakiLogLevel level, const char *msg, void *user)
 {
 	(void)user;
@@ -193,6 +224,32 @@ static void event_json(const char *event, const char *key, const char *value)
 static ChiakiBoolPredCond regist_done;
 static int regist_result = RESULT_NONE;
 static ChiakiRegisteredHost regist_host;
+static volatile bool regist_printed = false;
+
+// In kết quả ghép đôi (1 dòng JSON ra stdout) - chỉ in 1 lần
+static void regist_print_result(int result)
+{
+	if(regist_printed)
+		return;
+	regist_printed = true;
+	if(result != RESULT_OK)
+	{
+		printf("{\"ok\":false,\"error\":\"%s\"}\n",
+			result == RESULT_NONE ? "Hết thời gian chờ ghép đôi (kiểm tra PIN, địa chỉ IP và PS5 đang bật)"
+			: "Ghép đôi thất bại (PIN sai/hết hạn, hoặc PSN account id không đúng)");
+	}
+	else
+	{
+		printf("{\"ok\":true,\"target\":%d,\"nickname\":", (int)regist_host.target);
+		json_escape_print(stdout, regist_host.server_nickname);
+		printf(",\"regist_key\":\"");
+		hex_print((const uint8_t *)regist_host.rp_regist_key, sizeof(regist_host.rp_regist_key));
+		printf("\",\"rp_key\":\"");
+		hex_print(regist_host.rp_key, sizeof(regist_host.rp_key));
+		printf("\"}\n");
+	}
+	fflush(stdout);
+}
 
 static void regist_cb(ChiakiRegistEvent *event, void *user)
 {
@@ -211,6 +268,9 @@ static void regist_cb(ChiakiRegistEvent *event, void *user)
 			regist_result = RESULT_FAIL;
 			break;
 	}
+	// In kết quả NGAY tại đây: VietGame nhận được dù các bước sau (đánh thức luồng chính, dọn dẹp) có bị kẹt
+	fprintf(stderr, "[I] Ghep doi: chiaki bao ket qua %d\n", regist_result);
+	regist_print_result(regist_result);
 	regist_done.pred = true;
 	chiaki_bool_pred_cond_signal(&regist_done);
 	chiaki_bool_pred_cond_unlock(&regist_done);
@@ -256,25 +316,8 @@ static int cmd_regist(ChiakiLog *log, int argc, char **argv)
 	int result = regist_result;
 	chiaki_bool_pred_cond_unlock(&regist_done);
 
-	// In kết quả và đẩy ra NGAY (trước khi dọn dẹp): nếu bước dọn dẹp bị kẹt thì kết quả vẫn tới được VietGame
-	if(result != RESULT_OK)
-	{
-		printf("{\"ok\":false,\"error\":\"%s\"}\n",
-			result == RESULT_NONE ? "Hết thời gian chờ ghép đôi (kiểm tra PIN, địa chỉ IP và PS5 đang bật)"
-			: "Ghép đôi thất bại (PIN sai/hết hạn, hoặc PSN account id không đúng)");
-		fflush(stdout);
-	}
-	else
-	{
-		printf("{\"ok\":true,\"target\":%d,\"nickname\":", (int)regist_host.target);
-		json_escape_print(stdout, regist_host.server_nickname);
-		printf(",\"regist_key\":\"");
-		hex_print((const uint8_t *)regist_host.rp_regist_key, sizeof(regist_host.rp_regist_key));
-		printf("\",\"rp_key\":\"");
-		hex_print(regist_host.rp_key, sizeof(regist_host.rp_key));
-		printf("\"}\n");
-		fflush(stdout);
-	}
+	fprintf(stderr, "[I] Ghep doi: luong chinh nhan ket qua %d\n", result);
+	regist_print_result(result);
 
 	if(err != CHIAKI_ERR_SUCCESS || result == RESULT_NONE)
 		chiaki_regist_stop(&regist);
@@ -524,6 +567,9 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep)
 
 int main(int argc, char **argv)
 {
+#ifdef __ANDROID__
+	android_setup();
+#endif
 #ifdef _WIN32
 	SetUnhandledExceptionFilter(crash_filter);
 #endif
