@@ -86,10 +86,10 @@ jobs:
               if [ -f "chiaki-ng/third-party/$d/$l" ]; then mkdir -p "out/licenses/$d" && cp "chiaki-ng/third-party/$d/$l" "out/licenses/$d/"; fi
             done
           done
-          for d in $(find build -maxdepth 4 -type d \( -iname "openssl*src*" -o -iname "json-c*src*" -o -iname "miniupnpc*src*" -o -iname "json-c-src" -o -iname "miniupnpc-src" \)); do
-            n=$(basename "$d"); mkdir -p "out/licenses/$n"
-            for l in LICENSE LICENSE.txt COPYING; do [ -f "$d/$l" ] && cp "$d/$l" "out/licenses/$n/" || true; done
-            [ -f "$d/miniupnpc/LICENSE" ] && cp "$d/miniupnpc/LICENSE" "out/licenses/$n/" || true
+          # OpenSSL, json-c, miniupnpc: mã nguồn tải về trong thư mục build
+          for n in openssl json-c miniupnpc; do
+            f=$(find build -maxdepth 7 -type f \( -name LICENSE -o -name LICENSE.txt -o -name COPYING \) -ipath "*${n}*" | head -1)
+            if [ -n "$f" ]; then mkdir -p "out/licenses/$n" && cp "$f" "out/licenses/$n/"; else echo "Không thấy giấy phép $n"; fi
           done
           ls -R out/licenses
 
